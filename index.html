@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en" >
+<head>
+  <meta charset="UTF-8">
+  <title>CodePen - Oscilloscope JS</title>
+  
+
+</head>
+<body>
+<!-- partial:index.partial.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oscilloview</title>
+    <style>
+        :root {
+            --body-bg: #101010;
+            --box-bg: #333333;
+        }
+        
+        *
+        {
+            user-select: none;
+        }
+        
+        body
+        {
+            color: white;
+            background-color: var(--body-bg);
+            margin: 0px;
+        }
+
+        canvas
+        {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        br
+        {
+            clear: both;
+        }
+
+        div#box
+        {
+            padding: 15px 30px;
+            background-color: var(--box-bg);
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        div#box input:not([type="checkbox"]):not([type="radio"]), div#box select
+        {
+            float: right;
+        }
+
+        html.playing div#box
+        {
+            display: none;
+        }
+
+        div#controls
+        {
+            position: fixed;
+            max-width: calc(50vw - 50vmin);
+            top: 5px;
+            right: 5px;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        
+        div#tip
+        {
+            max-width: calc(50vw - 50vmin);
+        }
+
+        html:not(.playing) .hideWhenStopped
+        {
+            display: none !important;
+        }
+        
+        label
+        {
+            margin-right: 5px;
+        }
+        
+        span.note
+        {
+            text-decoration: underline;
+        }
+        
+        span.note::before
+        {
+            content: attr(title);
+            display: none;
+            position: absolute;
+            margin-top: -4.2em;
+            padding: .25em 1em;
+            border: 1px solid black;
+            border-radius: 15px;
+            background-color: var(--box-bg);
+        }
+        
+        span.note:hover::before
+        {
+            display: block;
+        }
+        
+        span.note::after
+        {
+            content: '*';
+            color: red;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <canvas></canvas>
+    <div id="box">
+        <form action="">
+            <input type="file" name="file">
+            <br>
+            <label for="fftSize">Window size (samples)</label>
+            <select name="fftSize">
+                <option value="32">2^5</option>
+                <option value="64">2^6</option>
+                <option value="128">2^7</option>
+                <option value="256">2^8</option>
+                <option value="512">2^9</option>
+                <option value="1024" selected>2^10</option>
+                <option value="2048">2^11</option>
+                <option value="4096">2^12</option>
+                <option value="8192">2^13</option>
+            </select>
+            <br>
+            <label for="pointSize">
+                <span class="note" title="And only points, unfortunately. Most implementations don't support setting line sizes.">Point</span>
+                diameter (pixels)
+            </label>
+            <input type="number" name="pointSize" step="any" value="5.0">
+            <br>
+            <label for="color">Point color (hex)</label>
+            <input type="text" name="color" pattern="[0-9A-Fa-f]{6}" value="13A10E" placeholder="13A10E">
+            <br>
+            <label for="fadeRate">Fade rate (float color/frame)</label>
+            <input type="number" name="fadeRate" step="any" value="0.075">
+            <br>
+            <label for="flipX">Flip X</label><input type="checkbox" name="flipX">&nbsp;
+            <label for="flipY">Flip Y</label><input type="checkbox" name="flipY">
+            <br>
+            <label for="drawMode">Draw mode</label>&nbsp;&nbsp;&nbsp;&nbsp;
+            Points <input type="radio" name="drawMode" value="points" checked>&nbsp;&nbsp;
+            Lines <input type="radio" name="drawMode" value="lines">
+            <br>
+            <input type="submit" value="do the thing">
+        </form>
+    </div>
+    <div id="controls" class="hideWhenStopped">
+        <input type="range" id="volume" min="0" max="1000">
+        <button id="playPause">&#x23EF;</button>
+        <button id="stop">&#x23F9;</button>
+    </div>
+    <div id="tip" class="hideWhenStopped">
+        Shift+left click to seek as a percentage of the window width
+    </div>
+    
+    <!-- ****************************************************************** -->
+    
+    <script type="module" src="main.js"></script>
+    <script type="glsl" id="point-vs">#version 300 es
+        precision mediump float;
+        
+        layout(location = 0) in float x;
+        layout(location = 1) in float y;
+        
+        uniform float pointSize;
+        uniform bool flipX;
+        uniform bool flipY;
+        
+        void main()
+        {
+            gl_PointSize = pointSize;
+            gl_Position = vec4(
+                x * (flipX ? -1.0 : 1.0),
+                y * (flipY ? -1.0 : 1.0),
+                0,
+                1
+            );
+        }
+    </script>
+    <script type="glsl" id="point-fs">#version 300 es
+        precision mediump float;
+        
+        out vec4 outColor;
+        
+        uniform vec3 pointColor;
+        
+        void main()
+        {
+            vec2 signedCoord = gl_PointCoord * 2.0 - 1.0;
+            float dist = sqrt(
+                dot(
+                    pow(signedCoord, vec2(2)),
+                    vec2(1) // dot with all ones is equivalent to element sum
+                )
+            );
+            
+            if(dist > 1.0) discard;
+            outColor = vec4(pointColor, max(0.0, 1.0 - dist));
+        }
+    </script>
+    
+    <script type="glsl" id="quad-vs">#version 300 es
+        precision mediump float;
+        
+        layout(location = 0) in vec2 pos;
+        layout(location = 1) in vec2 uv;
+        
+        out vec2 fragUV;
+        
+        void main()
+        {
+            gl_Position = vec4(pos, 0, 1);
+            fragUV = uv;
+        }
+    </script>
+    <script type="glsl" id="quad-fs">#version 300 es
+        precision mediump float;
+        
+        in vec2 fragUV;
+        
+        out vec4 outColor;
+        
+        uniform sampler2D tex;
+        uniform float fadeRate;
+        
+        void main()
+        {
+            vec3 val = max(vec3(0), texture(tex, fragUV).xyz - fadeRate);
+            outColor = vec4(val, 1);
+        }
+    </script>
+</body>
+</html>
+<!-- partial -->
+  <script  src="./script.js"></script>
+
+</body>
+</html>
